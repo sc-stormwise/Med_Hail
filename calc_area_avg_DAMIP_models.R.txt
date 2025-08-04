@@ -1,0 +1,168 @@
+######################################################################################################################################################
+# 
+# Program to read in global data at grid-cells from all studied DAMIP models, and compute area-averaged values, output to csv files.
+# 
+# S Cusack  April 2025
+# 
+######################################################################################################################################################
+
+
+
+##### Basic setup 
+
+library(ncdf4)
+library(fitdistrplus)
+library(evd)
+library(rgdal)
+library(maps)
+library(maptools)
+library(data.table)
+library(dplR)
+
+
+ipdir.ip<- "D:/***/"
+ipdir.cmip6<- "E:/***/"
+ipdir.cmip6.hist<- paste0(ipdir.cmip6,"HIST_DAMIP/global/")
+ipdir.cmip6.ghg<- paste0(ipdir.cmip6,"HIST_GHG/global/")
+ipdir.cmip6.nat<- paste0(ipdir.cmip6,"HIST_Nat/global/")
+ipdir.cmip6.aero<- paste0(ipdir.cmip6,"HIST_Aer/global/")
+
+
+opdir.base<- "E:/***/"
+opdir.cmip6.hist<- paste0(opdir.base,"HIST_DAMIP/area_avg/")
+opdir.cmip6.ghg<- paste0(opdir.base,"HIST_GHG/area_avg/")
+opdir.cmip6.nat<- paste0(opdir.base,"HIST_Nat/area_avg/")
+opdir.cmip6.aero<- paste0(opdir.base,"HIST_Aer/area_avg/")
+
+ip.fn<- paste0(ipdir.ip,'universal_grid_1p0.csv')
+ip.data<- read.table(ip.fn, header=T, sep=',')
+grid.lat<- ip.data$LatC;  grid.lon<- ip.data$LonC
+num.grid.pts<- length(grid.lat)
+grid.wt<- cos(grid.lat * pi / 180)
+
+ip.fn<- paste0(ipdir.ip,'CMIP6_model_names_DAMIP_tas.csv')
+ip.data<- read.table(ip.fn, header=T, sep=',')
+model.id.all<- as.character(ip.data$model); hist.runid.all<- as.character(ip.data$Hist_run); hist.grid.all<- as.character(ip.data$Hist_grid)
+ghg.runid.all<- as.character(ip.data$Hist_GHG_run); ghg.grid.all<- as.character(ip.data$Hist_GHG_grid)
+nat.runid.all<- as.character(ip.data$Hist_Nat_run); nat.grid.all<- as.character(ip.data$Hist_Nat_grid)
+aero.runid.all<- as.character(ip.data$Hist_Aer_run); aero.grid.all<- as.character(ip.data$Hist_Aer_grid)
+
+num.cmip6.models<- length(model.id.all)
+
+
+yr.arr<- 1850:2014; num.summers<- length(yr.arr)
+
+full.country.names<- map.where(database = "world", grid.lon, grid.lat)
+
+ptr.med<- which(grid.lat >= 35.0 & grid.lat <= 45.0 & grid.lon >= 0 & grid.lon <= 25 & is.na(full.country.names))
+
+
+
+
+
+####################################################################################################################################
+
+# read in all data, and do initial processing into annual anomalies for winter months
+
+
+indx.tmp<- c(1:70)
+
+#for (ff in 1:num.cmip6.models) {
+for (ff in indx.tmp) {
+
+  ip.fn<- paste0(ipdir.cmip6.ghg, model.id.all[ff], '_', ghg.runid.all[ff], '_', ghg.grid.all[ff], '_tas.csv')
+  tas.dat<- fread(ip.fn, header=F, sep=',')
+  tas.ip<- array(unlist(tas.dat), dim=c(dim(tas.dat)[1], num.grid.pts))
+rm(tas.dat); gc()
+
+  tas.MayOct<- array(0.0, c(num.summers, num.grid.pts))
+  for (s in 1:num.summers) {  indx<- ((s-1)*12)+5:10; tas.MayOct[s,]<- colMeans(tas.ip[indx,], na.rm=T)  }
+rm(tas.ip); gc()
+
+  med.tas<- array(0.0, num.summers)
+  for (s in 1:num.summers) {  
+    med.tas[s] <- sum(tas.MayOct[s, ptr.med] * grid.wt[ptr.med], na.rm=T) / sum(grid.wt[ptr.med])
+  }
+  op.var<- as.data.frame(list(year=yr.arr, med=med.tas))
+  op.fn<- paste0(opdir.cmip6.ghg, model.id.all[ff], '_', ghg.runid.all[ff], '_', ghg.grid.all[ff], '_MayOct_tas.csv')
+  fwrite(op.var, file=op.fn, sep=",", row.names=FALSE, col.names=TRUE, quote=FALSE)
+
+#####
+
+  ip.fn<- paste0(ipdir.cmip6.nat, model.id.all[ff], '_', nat.runid.all[ff], '_', nat.grid.all[ff], '_tas.csv')
+  tas.dat<- fread(ip.fn, header=F, sep=',')
+  tas.ip<- array(unlist(tas.dat), dim=c(dim(tas.dat)[1], num.grid.pts))
+rm(tas.dat); gc()
+
+  tas.MayOct<- array(0.0, c(num.summers, num.grid.pts))
+  for (s in 1:num.summers) {  indx<- ((s-1)*12)+5:10;  tas.MayOct[s,]<- colMeans(tas.ip[indx,], na.rm=T)  }
+rm(tas.ip); gc()
+
+  med.tas<- array(0.0, num.summers)
+  for (s in 1:num.summers) {  
+    med.tas[s] <- sum(tas.MayOct[s, ptr.med] * grid.wt[ptr.med], na.rm=T) / sum(grid.wt[ptr.med])
+  }
+  op.var<- as.data.frame(list(year=yr.arr, med=med.tas))
+  op.fn<- paste0(opdir.cmip6.nat, model.id.all[ff], '_', nat.runid.all[ff], '_', nat.grid.all[ff], '_MayOct_tas.csv')
+  fwrite(op.var, file=op.fn, sep=",", row.names=FALSE, col.names=TRUE, quote=FALSE)
+
+#####
+
+  ip.fn<- paste0(ipdir.cmip6.aero, model.id.all[ff], '_', aero.runid.all[ff], '_', aero.grid.all[ff], '_tas.csv')
+  tas.dat<- fread(ip.fn, header=F, sep=',')
+  tas.ip<- array(unlist(tas.dat), dim=c(dim(tas.dat)[1], num.grid.pts))
+rm(tas.dat); gc()
+
+  tas.MayOct<- array(0.0, c(num.summers, num.grid.pts))
+  for (s in 1:num.summers) {  indx<- ((s-1)*12)+5:10;  tas.MayOct[s,]<- colMeans(tas.ip[indx,], na.rm=T)  }
+rm(tas.ip); gc()
+
+  med.tas<- array(0.0, num.summers)
+  for (s in 1:num.summers) {  
+    med.tas[s] <- sum(tas.MayOct[s, ptr.med] * grid.wt[ptr.med], na.rm=T) / sum(grid.wt[ptr.med])
+  }
+  op.var<- as.data.frame(list(year=yr.arr, med=med.tas))
+  op.fn<- paste0(opdir.cmip6.aero, model.id.all[ff], '_', aero.runid.all[ff], '_', aero.grid.all[ff], '_MayOct_tas.csv')
+  fwrite(op.var, file=op.fn, sep=",", row.names=FALSE, col.names=TRUE, quote=FALSE)
+
+
+print(c(ff, substr(Sys.time(),12,19) ))
+}
+
+
+#######
+
+
+
+indx.tmp<- c(1:70)
+
+#for (ff in 1:num.cmip6.models) {
+for (ff in indx.tmp) {
+
+  ip.fn<- paste0(ipdir.cmip6.hist, model.id.all[ff], '_', hist.runid.all[ff], '_', hist.grid.all[ff], '_tas.csv')
+  tas.dat<- fread(ip.fn, header=F, sep=',')
+  tas.ip<- array(unlist(tas.dat), dim=c(dim(tas.dat)[1], num.grid.pts))
+rm(tas.dat); gc()
+
+  tas.MayOct<- array(0.0, c(num.summers, num.grid.pts))
+  for (s in 1:num.summers) {  indx<- ((s-1)*12)+5:10; tas.MayOct[s,]<- colMeans(tas.ip[indx,], na.rm=T)  }
+rm(tas.ip); gc()
+
+  med.tas<- array(0.0, num.summers)
+  for (s in 1:num.summers) {  
+    med.tas[s] <- sum(tas.MayOct[s, ptr.med] * grid.wt[ptr.med], na.rm=T) / sum(grid.wt[ptr.med])
+  }
+  op.var<- as.data.frame(list(year=yr.arr, med=med.tas))
+  op.fn<- paste0(opdir.cmip6.hist, model.id.all[ff], '_', hist.runid.all[ff], '_', hist.grid.all[ff], '_MayOct_tas.csv')
+  fwrite(op.var, file=op.fn, sep=",", row.names=FALSE, col.names=TRUE, quote=FALSE)
+
+print(c(ff, substr(Sys.time(),12,19) ))
+}
+
+
+
+#######
+
+
+
+###  end of program

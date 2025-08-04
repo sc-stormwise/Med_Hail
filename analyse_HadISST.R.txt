@@ -1,0 +1,122 @@
+######################################################################################################################################################
+# 
+# Program to read in HadISST data, and plot timeseries of SST trends for the Med, and global - Figure 2 in NHESS manuscript.
+# 
+# S Cusack  30th March 2025
+# 
+######################################################################################################################################################
+
+
+
+##### Basic setup 
+
+
+library(ncdf4)
+library(fitdistrplus)
+library(evd)
+library(rgdal)
+library(maps)
+library(maptools)
+library(data.table)
+library(dplR)
+
+
+ipdir.ip<- "D:/***/"
+op.dir<- "D:/***/"
+
+
+
+##### Read in observed SST values averaged over the Med. Sea region (the 'alps1' region)
+
+yr.arr.obs<- 1870:2024;  num.yrs.obs<- length(yr.arr.obs)
+
+ip.fn<- paste0(ipdir.ip, "SST_data/HadISST_sst.nc")
+ex.nc = nc_open(ip.fn)
+ip.lon<-  ncvar_get(ex.nc,"longitude"); ip.lat<-  ncvar_get(ex.nc,"latitude"); ip.time<-  ncvar_get(ex.nc,"time"); ip.sst<- ncvar_get(ex.nc,"sst")
+nc_close(ex.nc)
+
+ptr.med.lat<- which(ip.lat >= 35.0 & ip.lat <= 45.0); ptr.med.lon<- which(ip.lon >= 0 & ip.lon <= 25)
+ptr.global.lat<- which(ip.lat >= -60.0 & ip.lat <= 60.0); ptr.global.lon<- which(ip.lon >= -180 & ip.lon <= 180)
+ip.med.sst<- array(0.0, dim(ip.sst)[3]);  ip.global.sst<- ip.med.sst
+for (t in 1:dim(ip.sst)[3]) {
+  temparr<- c(); temp.wts<- c()
+  for (y in ptr.med.lat) { 
+    px<- which(!is.na(ip.sst[ptr.med.lon, y, t]))
+    if (length(px) > 0) { 
+      temparr<- c(temparr, ip.sst[ptr.med.lon[px], y, t])
+      lat.wt<- cos(ip.lat[y]*pi/180)
+      temp.wts<- c(temp.wts, rep(lat.wt, length(px)))
+    }
+  }
+  ip.med.sst[t] <- sum(temparr*temp.wts) / sum(temp.wts)
+
+  temparr<- c(); temp.wts<- c()
+  for (y in ptr.global.lat) {
+    px<- which(!is.na(ip.sst[ptr.global.lon, y, t]) & ip.sst[ptr.global.lon, y, t] >= -1.79)
+    if (length(px) > 0) { 
+      temparr<- c(temparr, ip.sst[ptr.global.lon[px], y, t])
+      lat.wt<- cos(ip.lat[y]*pi/180)
+      temp.wts<- c(temp.wts, rep(lat.wt, length(px)))
+    }
+  }
+  ip.global.sst[t] <- sum(temparr*temp.wts) / sum(temp.wts)
+}
+
+Med.SST.anoms.tmp<- array(0.0, num.yrs.obs)
+for (y in 1:num.yrs.obs) {  ptr<- (y-1)*12 + 5:10; Med.SST.anoms.tmp[y]<- mean(ip.med.sst[ptr])  }
+clim.mn<- mean(Med.SST.anoms.tmp[1:(num.yrs.obs-10)]);  Med.SST.anoms<- Med.SST.anoms.tmp-clim.mn
+
+Global.SST.anoms.tmp<- array(0.0, num.yrs.obs)
+for (y in 1:num.yrs.obs) {  ptr<- (y-1)*12 + 5:10; Global.SST.anoms.tmp[y]<- mean(ip.global.sst[ptr])  }
+clim.mn<- mean(Global.SST.anoms.tmp[1:(num.yrs.obs-10)]);  Global.SST.anoms<- Global.SST.anoms.tmp-clim.mn
+
+
+### set filtering parameters ('filt.period' contains periods being passed, 'usr.filt.n' is the order of the Butterworth filter)
+filt.period<- 5
+usr.filt.n<- 2
+Med.SST.anoms.filt<- pass.filt(Med.SST.anoms, filt.period, type="low", method="Butterworth", n=usr.filt.n)
+Global.SST.anoms.filt<- pass.filt(Global.SST.anoms, filt.period, type="low", method="Butterworth", n=usr.filt.n)
+
+
+### do a linear fit of SST in Med and Global areas with time, over the period 1980-2024
+indx<- 111:155
+
+lfit.med<- lm(Med.SST.anoms[indx] ~ yr.arr.obs[indx])
+lfit.global<- lm(Global.SST.anoms[indx] ~ yr.arr.obs[indx])
+
+indx2<- 71:155
+
+
+yrange=c(-1,1.99); xrange=c(1941,2023)
+fn<- paste(op.dir,'Figure2.png',sep='')
+png(file = fn, width = 2250., height = 1000., type = 'cairo')
+op <- par( mai = c(1.5, 2.25, 0.4, 2.3), cex=2.9); xx<- yr.arr.obs[indx2]
+  plot(yr.arr.obs[indx2], Med.SST.anoms[indx2], type="l", lty = 1, cex=1.5, axes = FALSE, xlab = '', ylab = '', xlim=xrange,
+       ylim=yrange, cex.main=1.65, cex.axis=1.35, cex.lab=1.46,  main="", lwd=2, col='orangered1')
+
+  lines(yr.arr.obs[indx2], Global.SST.anoms[indx2], type="l", lty = 1, cex=1.5, lwd=2, col='grey35')
+  lines(yr.arr.obs[indx], as.numeric(lfit.med$fit), type="l", lty = 1, cex=1.5, lwd=8, col='red3')
+  lines(yr.arr.obs[indx], as.numeric(lfit.global$fit), type="l", lty = 1, cex=1.5, lwd=8, col='black')
+  lines(c(1925,2045), c(0.0,0.0), type="l", lty = 1, cex=1.5, col='grey10')
+  xarr<- (0:9)*10+1930; numx<- length(xarr); yy1<- c(-1000,1000)
+  for (x in 1:numx) { xx1<- c(xarr[x],xarr[x]); lines(xx1,yy1, type="l",lty = 2,lwd=1.95,col='grey') }
+  yarr<- (-6:6)*0.5; numy<- length(yarr); xx1<- c(1900,2100)
+  for (y in 1:numy) { yy1<- c(yarr[y],yarr[y]); lines(xx1,yy1, type="l",lty = 2,lwd=1.85,col='grey') }
+  legend(1940, 2.0, c("Global: 0.011 K/yr", "Mediterranean: 0.039 K/yr"), lty=c(1,1), lwd=c(7,7), col=c('black', 'red3'), cex=1.6)
+
+  ax.size = 1.6
+  ## X Axis
+  xticks <- seq(1940, 2020, by=10); axis(side=1, at = xticks, labels = xticks, las = 1, tck = 0.017, cex.axis = ax.size, padj=-0.45)
+  xticks <- seq(1940, 2020, by=5); axis(side=1, at = xticks, labels = NA, las = 1, tck = 0.008, cex.axis = ax.size, padj=-0.45)
+  ## Y Axis
+  yticks <- (-6:6)*0.5;  axis(side=2, at = yticks, labels = NA, las = 1, tck = -0.015, cex.axis = ax.size*1.15, hadj=0.7)
+  yticks <- (-3:3)*1;  axis(side=2, at = yticks, labels = yticks, las = 1, tck = -0.0175, cex.axis = ax.size*1.15, hadj=0.4)
+  mtext(side = 2, 'Temperature anomaly (K)', cex = 4.1, padj = -3.0)
+box(); par(op); dev.off()
+
+
+
+###########################################
+
+
+###  end of program

@@ -1,0 +1,215 @@
+######################################################################################################################################################
+# 
+# Program to analyse trends in industry hail losses.
+# 
+# S Cusack  30th July 2025
+# 
+######################################################################################################################################################
+
+
+
+library(ncdf4)
+library(fitdistrplus)
+library(evd)
+library(rgdal)
+library(maps)
+library(maptools)
+library(data.table)
+library(dplR)
+
+
+opdir.plots<- "D:/***/"
+
+
+
+
+#####################################################################################################
+
+### Germany Auto
+
+
+ip.fn<- "D:/***/Germany_GDV_auto_loss_annual_2023.csv"
+ip.data<- read.table(ip.fn, header=T, sep=',')
+ip.year<- as.integer(ip.data$Year)
+ip.loss<- as.numeric(ip.data$Loss_trended_Mn_euros) * 1e-3
+
+lfit<- lm(log(ip.loss) ~ ip.year)
+fitted.vals.trend<- exp(as.numeric(lfit$coef[1]) + as.numeric(lfit$coef[2])*ip.year)
+
+lfit.gdv<- fitted.vals.trend
+ip.year.gdv<- ip.year
+ip.loss.gdv<- ip.loss
+
+pval.gdv<- 1e-4*round(1e4*summary(lfit)$coeff[2,4])
+
+indx<- 8:51
+lfit.1980<- lm(log(ip.loss[indx]) ~ ip.year[indx])
+
+
+
+#####################################################################################################
+
+### France_FA_Ann_claim_freq_sev_Bldgs
+
+
+fn<- "D:/***/FFB_index_1990_2023.csv"
+ip.data<- read.table(fn, header=T, sep=',')
+ip.yr<- as.integer(ip.data$Year)
+ip.indx<- as.numeric(ip.data$FFB_index_Q4)
+
+trending.yrs<- 1990:2022; num.trending.yrs<- length(trending.yrs)
+
+indx.2022<- ip.indx[which(ip.yr == 2022)]
+trend.sev.yr<- array(0.0, num.trending.yrs)
+for (y in 1:num.trending.yrs) {
+  ptr.yr<- which(ip.yr == trending.yrs[y])
+  trend.sev.yr[y]<- indx.2022 / ip.indx[ptr.yr]
+}
+
+
+
+ip.fn<- "D:/***/France_FA_Ann_claim_freq_sev_Bldgs.csv"
+ip.data<- read.table(ip.fn, header=T, sep=',')
+ip.year<- as.integer(ip.data$Year); num.yrs.FA<- length(ip.year)
+ip.freq<- as.numeric(ip.data$Freq)
+ip.sev<- as.numeric(ip.data$MeanSevEuros)
+
+HA.Bldgs.loss.2022<- 3.317e9
+
+ptr.2022<- which(ip.year==2022)
+Num.Bldgs.2022<- (HA.Bldgs.loss.2022/ip.sev[ptr.2022]) / ip.freq[ptr.2022]
+
+HA.Bldgs.loss.init<- (Num.Bldgs.2022 * ip.freq) * ip.sev * 1e-9
+
+HA.Bldgs.loss.ann<- HA.Bldgs.loss.init
+for (y in 1:num.yrs.FA) {
+  ptr.yr<- which(trending.yrs == ip.year[y])
+  HA.Bldgs.loss.ann[y] <- HA.Bldgs.loss.init[y] * trend.sev.yr[ptr.yr]
+}
+
+lfit<- lm(log(HA.Bldgs.loss.ann[1:33]) ~ ip.year[1:33])
+fitted.vals.trend<- exp(as.numeric(lfit$coef[1]) + as.numeric(lfit$coef[2])*ip.year)
+
+best.fit.trend<- exp(as.numeric(lfit$coef[2]))
+
+
+lfit.fa<- fitted.vals.trend
+ip.year.fa<- ip.year
+ip.loss.fa<- HA.Bldgs.loss.ann
+
+pval.fa<- 1e-4*round(1e4*summary(lfit)$coeff[2,4])
+
+lfit.2021<- lm(log(HA.Bldgs.loss.ann[1:32]) ~ ip.year[1:32])
+summary(lfit.2021)
+
+#####################################################################################################
+
+### Switzerland - VKG data
+
+
+# Made a new v2 of the VKG loss cost file. Used TIV=2500 Bn CHF in 2020 from Fig 6, then trended by 5% each year to 2021-2023, then used reported losses in those years to get loss cost.
+# (Fig 6 is from https://cms.vkg.ch/media/at1kb01p/vkf_analyse-schadendaten_de.pdf)
+
+ip.fn<- "D:/***/VKG_loss_cost_1980_2023_v2.csv"
+ip.data<- read.table(ip.fn, header=T, sep=',')
+ip.year<- as.integer(ip.data$Year)
+ip.loss<- as.numeric(ip.data$Loss_cost)
+
+lfit<- lm(log(ip.loss[1:44]) ~ ip.year[1:44])
+fitted.vals.trend<- exp(as.numeric(lfit$coef[1]) + as.numeric(lfit$coef[2])*ip.year)
+
+best.fit.trend<- exp(as.numeric(lfit$coef[2]))   #  trend is only 0.3% per year from 1990 to 2023
+
+lfit.vkg<- fitted.vals.trend
+ip.year.vkg<- ip.year
+ip.loss.vkg<- ip.loss
+
+pval.vkg<- 1e-4*round(1e4*summary(lfit)$coeff[2,4])
+
+
+
+################################
+
+### make a combined plot for NHESS
+
+
+fn<- paste0(opdir.plots, "Figure4.png")
+png(file = fn, width = 3000., height = 1500., res=300, pointsize=10, type = 'cairo')
+op <- par( mai = c(0.4, 0.75, 0.1, 0.2), cex=1.0, mfrow=c(2,2))
+
+  yy.max<- 3.5; yy.min<- 0;  del.yy<- 0.5
+  yrange=c(yy.min, yy.max); xrange=c(1971,2022)
+  plot(ip.year.gdv, ip.loss.gdv, type="l", lty = 1, cex=2.5, axes = FALSE, xlab = '', ylab = '', xlim=xrange,
+       ylim=yrange, cex.main=1.65, cex.axis=1.35, cex.lab=1.46, main="", lwd=4.5, col='black')
+
+  lines(ip.year.gdv, lfit.gdv, type="l", lty = 2, cex=1.5, lwd=6, col='red3')
+ 
+  xarr<- (0:6)*10+1970; numx<- length(xarr); yy1<- c(-200,20000)
+  for (x in 1:numx) { xx1<- c(xarr[x],xarr[x]); lines(xx1,yy1, type="l",lty = 2,lwd=1.03,col='grey') }
+  yarr<- (0:8)*del.yy; numy<- length(yarr); xx1<- c(1800,2100)
+  for (y in 1:numy) { yy1<- c(yarr[y],yarr[y]); lines(xx1,yy1, type="l",lty = 2,lwd=1.03,col='grey') }
+  legend(1987.5, yy.max, c("Annual", "Trend = 3.1% / yr"), lty=c(1, 2), lwd=c(2.5,2.5), col=c('black', 'red3'), cex=1.25)
+  text(1972, 3.25, '(a)', cex=1.75, col='black')
+  ax.size = 1.65
+  ## X Axis
+  xticks <- seq(1970, 2020, by=10);  axis(side=1, at = xticks, labels = xticks, las = 1, tck = 0.015, cex.axis = ax.size, padj=-0.4)
+  xticks <- seq(1970, 2020, by=5);  axis(side=1, at = xticks, labels = NA, las = 1, tck = 0.015, cex.axis = ax.size, padj=-0.4)
+  ## Y Axis
+  yticks <- (0:8)*del.yy;  axis(side=2, at = yticks, labels = NA, las = 1, tck = -0.012, cex.axis = ax.size, hadj=0.45)
+  yticks <- (0:8);  axis(side=2, at = yticks, labels = yticks, las = 1, tck = -0.012, cex.axis = ax.size, hadj=0.45)
+  mtext(side = 2, 'Annual losses (Bn EUR)', cex = 1.25, padj = -2.6)
+box()
+
+  yy.max<- 3.5; yy.min<- 0;  del.yy<- 0.5
+  yrange=c(yy.min, yy.max); xrange=c(1990,2021.5)
+  plot(ip.year.fa, ip.loss.fa, type="l", lty = 1, cex=2.5, axes = FALSE, xlab = '', ylab = '', xlim=xrange,
+       ylim=yrange, cex.main=1.65, cex.axis=1.5, cex.lab=1.8, main="", lwd=4.5, col='black')
+
+  lines(ip.year.fa, lfit.fa, type="l", lty = 2, cex=1.5, lwd=6, col='red3')
+ 
+  xarr<- (0:8)*5+1990; numx<- length(xarr); yy1<- c(-200,20000)
+  for (x in 1:numx) { xx1<- c(xarr[x],xarr[x]); lines(xx1,yy1, type="l",lty = 2,lwd=1.03,col='grey') }
+  yarr<- (0:8)*del.yy; numy<- length(yarr); xx1<- c(1800,2100)
+  for (y in 1:numy) { yy1<- c(yarr[y],yarr[y]); lines(xx1,yy1, type="l",lty = 2,lwd=1.03,col='grey') }
+  legend(1995, yy.max, c("Annual", "Trend = 5.8% / yr"), lty=c(1, 2), lwd=c(2.5,2.5), col=c('black', 'red3'), cex=1.25)
+  text(1992, 3.25, '(b)', cex=1.75, col='black')
+  ax.size = 1.65
+  ## X Axis
+  xticks <- seq(1990, 2020, by=5);  axis(side=1, at = xticks, labels = xticks, las = 1, tck = 0.015, cex.axis = ax.size, padj=-0.4)
+  ## Y Axis
+  yticks <- (0:8)*del.yy;  axis(side=2, at = yticks, labels = NA, las = 1, tck = -0.012, cex.axis = ax.size, hadj=0.45)
+  yticks <- (0:8);  axis(side=2, at = yticks, labels = yticks, las = 1, tck = -0.012, cex.axis = ax.size, hadj=0.45)
+  mtext(side = 2, 'Annual losses (Bn EUR)', cex = 1.25, padj = -2.6)
+box()
+
+  yy.max<- 22; yy.min<- 0;  del.yy<- 2.5
+  yrange=c(yy.min, yy.max); xrange=c(1980.5,2022.5)
+  plot(ip.year.vkg, ip.loss.vkg, type="l", lty = 1, cex=2.5, axes = FALSE, xlab = '', ylab = '', xlim=xrange,
+       ylim=yrange, cex.main=1.65, cex.axis=1.35, cex.lab=1.46, main="", lwd=4.5, col='black')
+
+  lines(ip.year.vkg, lfit.vkg, type="l", lty = 2, cex=1.5, lwd=6, col='red3')
+ 
+  xarr<- (0:6)*10+1970; numx<- length(xarr); yy1<- c(-200,20000)
+  for (x in 1:numx) { xx1<- c(xarr[x],xarr[x]); lines(xx1,yy1, type="l",lty = 2,lwd=1.03,col='grey') }
+  yarr<- (0:8)*del.yy; numy<- length(yarr); xx1<- c(1800,2100)
+  for (y in 1:numy) { yy1<- c(yarr[y],yarr[y]); lines(xx1,yy1, type="l",lty = 2,lwd=1.03,col='grey') }
+  legend(1986, yy.max, c("Annual", "Trend = 2.6% / yr" ), lty=c(1, 2), lwd=c(2.5,2.5), col=c('black', 'red3'), cex=1.25)
+  text(1982.2, 21.25, '(c)', cex=1.75, col='black')
+  ax.size = 1.65
+  ## X Axis
+  xticks <- seq(1980, 2020, by=10);  axis(side=1, at = xticks, labels = xticks, las = 1, tck = 0.015, cex.axis = ax.size, padj=-0.4)
+  xticks <- seq(1980, 2020, by=5);  axis(side=1, at = xticks, labels = NA, las = 1, tck = 0.015, cex.axis = ax.size, padj=-0.4)
+  ## Y Axis
+  yticks <- (0:8)*2.5;  axis(side=2, at = yticks, labels = NA, las = 1, tck = -0.012, cex.axis = ax.size, hadj=0.7)
+  yticks <- (0:4)*5;  axis(side=2, at = yticks, labels = yticks, las = 1, tck = -0.012, cex.axis = ax.size, hadj=0.7)
+  mtext(side = 2, 'Loss cost (cents / 1000 CHF)', cex = 1.25, padj = -3.0)
+box()
+
+par(op); dev.off()
+
+
+
+#########################################
+
+
+###  end of program

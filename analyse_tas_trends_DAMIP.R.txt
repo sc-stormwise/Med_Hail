@@ -1,0 +1,306 @@
+######################################################################################################################################################
+# 
+# Program to analyse surface temperature trends in southern/central Europe from DAMIP climate model experiments.
+# 
+# S Cusack  April 2025
+# 
+######################################################################################################################################################
+
+
+
+library(ncdf4)
+library(fitdistrplus)
+library(evd)
+library(rgdal)
+library(maps)
+library(maptools)
+library(data.table)
+library(dplR)
+
+
+ipdir.ip<- "D:/***/"
+
+
+dir.interim<- "E:/***/"
+ipdir.ghg<- paste0(dir.interim, "HIST_GHG/area_avg/")
+ipdir.nat<- paste0(dir.interim, "HIST_Nat/area_avg/")
+ipdir.aero<- paste0(dir.interim, "HIST_Aer/area_avg/")
+ipdir.hist<- paste0(dir.interim, "HIST_DAMIP/area_avg/")
+
+opdir.plots<- "D:/***/"
+
+
+ip.fn<- paste0(ipdir.ip,'universal_grid_1p0.csv')
+ip.data<- read.table(ip.fn, header=T, sep=',')
+grid.lat.tas<- ip.data$LatC;  grid.lon.tas<- ip.data$LonC
+num.grid.pts.tas<- length(grid.lat.tas)
+grid.wt.tas<- cos(grid.lat.tas * pi / 180)
+
+full.country.names<- map.where(database = "world", grid.lon.tas, grid.lat.tas)
+
+ptr.med<- which(grid.lat.tas >= 35.0 & grid.lat.tas <= 45.0 & grid.lon.tas >= 0 & grid.lon.tas <= 25 & is.na(full.country.names))
+
+
+### set filtering parameters ('filt.band' contains periods being passed, 'usr.filt.n' is the order of the Butterworth filter)
+filt.period<- 5
+usr.filt.n<- 2
+
+
+
+######################################################################################################################################################
+
+###  make a map of the Mediterranean study area, for presentation
+
+
+init.map.plot.2 <- function (fn.xlim = c(-10,30), fn.ylim = c(40,70), fn.xlab = "", fn.ylab = "", fn.cex.axis=1){
+  plot(c(0,0), xlim = fn.xlim, ylim = fn.ylim, xaxs = 'i', yaxs = 'i', axes=FALSE,  xlab = "", ylab = "", cex.axis= fn.cex.axis, add = FALSE) }
+
+xlim.usr <- c(-12,35); ylim.usr <- c(33,60)
+
+usr.axis.sz<- 1.75;  usr.leg.size<- 1.3; usr.pt.size<- 0.5
+grid.lon.tas.2<- grid.lon.tas-0.25;  grid.lat.tas.2<- grid.lat.tas-0.25;  grid.lat.tas.3<- grid.lat.tas+0.2
+
+filename<- paste0(opdir.plots, "Figure1.png")
+png(file = filename, width = 1070., height = 600., res=216, pointsize=10, type = 'cairo')
+op<- par( mai=c(0.25, 0.35, 0.1, 0.12), cex=1.0, mfrow=c(1,1))
+
+  init.map.plot.2(fn.xlim = xlim.usr, fn.ylim = ylim.usr, fn.xlab = "", fn.ylab = "", fn.cex.axis=usr.axis.sz)
+  points(grid.lon.tas[ptr.med] ,grid.lat.tas[ptr.med], col = 'grey75', bg = 'grey75', pch=22, cex = 1.62)
+  map('world', add=TRUE, lwd=1.05, col='grey5')
+
+  ax.size = 1.25
+  xticks <- seq(-10, 30, by=10);  axis(side=1, at = xticks, labels = xticks, las = 1, tck = -0.015, cex.axis = ax.size, padj=-0.65 )
+  yticks <- seq(40, 60, by=10);  axis(side=2, at = yticks, labels = yticks, las = 1, tck = -0.015, cex.axis = ax.size, hadj=0.5 )
+
+  xx.poly<- c(0, 0, 25, 25, 0); yy.poly<- c(35, 45, 45, 35, 35);  polygon(xx.poly, yy.poly, border='red3', col=NA, lty=1, lwd=1.5)
+
+box(); par(op); dev.off()
+
+
+
+
+######################################################################################################################################################
+
+##### Read in Test simulation data
+
+
+ip.fn<- paste0(ipdir.ip,'CMIP6_model_names_DAMIP_tas.csv')
+ip.data<- read.table(ip.fn, header=T, sep=',')
+model.id.all<- as.character(ip.data$model); hist.runid.all<- as.character(ip.data$Hist_run); hist.grid.all<- as.character(ip.data$Hist_grid)
+ghg.runid.all<- as.character(ip.data$Hist_GHG_run); ghg.grid.all<- as.character(ip.data$Hist_GHG_grid)
+nat.runid.all<- as.character(ip.data$Hist_Nat_run); nat.grid.all<- as.character(ip.data$Hist_Nat_grid)
+aero.runid.all<- as.character(ip.data$Hist_Aer_run); aero.grid.all<- as.character(ip.data$Hist_Aer_grid)
+
+num.cmip6.models<- length(model.id.all)
+
+sim.yrs<- 1850:2014;  num.summers<- length(sim.yrs)
+
+ghg.med.ann<- array(0.0, c(num.cmip6.models, num.summers)); nat.med.ann<- ghg.med.ann; aero.med.ann<- ghg.med.ann; hist.med.ann<- ghg.med.ann
+
+for (ff in 1:num.cmip6.models) {
+
+  ip.fn<- paste0(ipdir.ghg, model.id.all[ff], '_', ghg.runid.all[ff], '_', ghg.grid.all[ff], '_MayOct_tas.csv')
+  ip.dat<- fread(ip.fn, header=T, sep=',')
+  ghg.med.ann[ff, 1:num.summers]<- as.numeric(ip.dat$med[1:num.summers])
+
+  ip.fn<- paste0(ipdir.nat, model.id.all[ff], '_', nat.runid.all[ff], '_', nat.grid.all[ff], '_MayOct_tas.csv')
+  ip.dat<- fread(ip.fn, header=T, sep=',')
+  nat.med.ann[ff, 1:num.summers]<- as.numeric(ip.dat$med[1:num.summers])
+
+  ip.fn<- paste0(ipdir.aero, model.id.all[ff], '_', aero.runid.all[ff], '_', aero.grid.all[ff], '_MayOct_tas.csv')
+  ip.dat<- fread(ip.fn, header=T, sep=',')
+  aero.med.ann[ff, 1:num.summers]<- as.numeric(ip.dat$med[1:num.summers])
+
+  ip.fn<- paste0(ipdir.hist, model.id.all[ff], '_', hist.runid.all[ff], '_', hist.grid.all[ff], '_MayOct_tas.csv')
+  ip.dat<- fread(ip.fn, header=T, sep=',')
+  hist.med.ann[ff, 1:num.summers]<- as.numeric(ip.dat$med[1:num.summers])
+}
+
+
+
+ptr.CTL<- array(0, num.cmip6.models)
+ptr.CTL[1:10] <- 1
+ptr.CTL[11:25] <- 2
+ptr.CTL[26:30] <- 3
+ptr.CTL[31:45] <- 4
+ptr.CTL[46:55] <- 5
+ptr.CTL[56:70] <- 6
+
+num.ctl.models<- 6
+
+
+#####  Compute anomaly w.r.t. Historical sim in 1870-2014 
+
+hist.med.clim<- array(0.0, num.ctl.models)
+for (ff in 1:num.ctl.models) {
+  px<- which(ptr.CTL == ff)
+  hist.med.clim[ff]<- mean(hist.med.ann[px, 21:165])
+}
+
+ghg.med.ann.anom<- array(0.0, c(num.cmip6.models, num.summers)); hist.med.ann.anom<- ghg.med.ann.anom; nat.med.ann.anom<- ghg.med.ann.anom; aero.med.ann.anom<- ghg.med.ann.anom
+for (ff in 1:num.cmip6.models) {
+  ghg.med.ann.anom[ff,]<- ghg.med.ann[ff,] - hist.med.clim[ptr.CTL[ff]];  nat.med.ann.anom[ff,]<- nat.med.ann[ff,] - hist.med.clim[ptr.CTL[ff]]
+  aero.med.ann.anom[ff,]<- aero.med.ann[ff,] - hist.med.clim[ptr.CTL[ff]]; hist.med.ann.anom[ff,]<- hist.med.ann[ff,] - hist.med.clim[ptr.CTL[ff]]
+}
+
+
+
+#####  Compute low-freq filtered change
+
+ghg.med.ann.anom.filt<- array(0.0, c(num.cmip6.models, num.summers)); nat.med.ann.anom.filt<- ghg.med.ann.anom.filt
+aero.med.ann.anom.filt<- ghg.med.ann.anom.filt; hist.med.ann.anom.filt<- ghg.med.ann.anom.filt
+
+for (ff in 1:num.cmip6.models) {
+  ghg.med.ann.anom.filt[ff,]<- pass.filt(ghg.med.ann.anom[ff,], filt.period, type="low", method="Butterworth", n=usr.filt.n)
+  nat.med.ann.anom.filt[ff,]<- pass.filt(nat.med.ann.anom[ff,], filt.period, type="low", method="Butterworth", n=usr.filt.n)
+  aero.med.ann.anom.filt[ff,]<- pass.filt(aero.med.ann.anom[ff,], filt.period, type="low", method="Butterworth", n=usr.filt.n)
+  hist.med.ann.anom.filt[ff,]<- pass.filt(hist.med.ann.anom[ff,], filt.period, type="low", method="Butterworth", n=usr.filt.n)
+}
+
+
+#####  Calculate the grand ensemble mean change (over all ensemble members of all models)
+
+ghg.med.ann.ensmn<- colMeans(ghg.med.ann.anom.filt); nat.med.ann.ensmn<- colMeans(nat.med.ann.anom.filt)
+aero.med.ann.ensmn<- colMeans(aero.med.ann.anom.filt); hist.med.ann.ensmn<- colMeans(hist.med.ann.anom.filt)
+
+op.var1<- as.data.frame(list( Year=sim.yrs, GHG=ghg.med.ann.ensmn, Nat=nat.med.ann.ensmn, Aero=aero.med.ann.ensmn, Hist=hist.med.ann.ensmn))
+
+
+
+#####  Look at changes per model (average over ens members of each model)
+
+
+uniq.models<- unique(model.id.all); num.uniq.models<- length(uniq.models)
+
+ghg.med.ann.anom.filt.model<- array(0.0, c(num.uniq.models, num.summers)); nat.med.ann.anom.filt.model<- ghg.med.ann.anom.filt.model
+aero.med.ann.anom.filt.model<- ghg.med.ann.anom.filt.model; hist.med.ann.anom.filt.model<- ghg.med.ann.anom.filt.model
+for (mm in 1:num.uniq.models) {
+  mod.indx<- which(model.id.all == uniq.models[mm])
+  ghg.med.ann.anom.filt.model[mm, ]<- colMeans(ghg.med.ann.anom.filt[mod.indx, ]);  nat.med.ann.anom.filt.model[mm, ]<- colMeans(nat.med.ann.anom.filt[mod.indx, ])
+  aero.med.ann.anom.filt.model[mm, ]<- colMeans(aero.med.ann.anom.filt[mod.indx, ]);  hist.med.ann.anom.filt.model[mm, ]<- colMeans(hist.med.ann.anom.filt[mod.indx, ])
+}
+
+
+
+
+#################################################################
+
+##### Read in observed SST values averaged over the Med. Sea region (the 'med' region), from HadISST
+
+
+ip.fn<- paste0(ipdir.ip, "SST_data/HadISST_sst.nc")
+ex.nc = nc_open(ip.fn)
+ip.lon<-  ncvar_get(ex.nc,"longitude"); ip.lat<-  ncvar_get(ex.nc,"latitude"); ip.time<-  ncvar_get(ex.nc,"time"); ip.sst<- ncvar_get(ex.nc,"sst")
+nc_close(ex.nc)
+
+
+ptr.med.obs.lat<- which(ip.lat >= 35.0 & ip.lat <= 45.0); ptr.med.obs.lon<- which(ip.lon >= 0 & ip.lon <= 25)
+ip.med.sst<- array(0.0, dim(ip.sst)[3])
+for (t in 1:dim(ip.sst)[3]) {
+  temparr<- c(); temp.wts<- c()
+  for (y in ptr.med.lat) { 
+    px<- which(!is.na(ip.sst[ptr.med.obs.lon, y, t]))
+    if (length(px) > 0) { 
+      temparr<- c(temparr, ip.sst[ptr.med.obs.lon[px], y, t])
+      lat.wt<- cos(ip.lat[y]*pi/180)
+      temp.wts<- c(temp.wts, rep(lat.wt, length(px)))
+    }
+  }
+  ip.med.sst[t] <- sum(temparr*temp.wts) / sum(temp.wts)
+}
+
+yr.arr.obs<- 1870:2024;  num.yrs.obs<- length(yr.arr.obs)
+Med.SST.anoms.tmp<- array(0.0, num.yrs.obs)
+for (y in 1:num.yrs.obs) {  ptr<- (y-1)*12 + 5:10; Med.SST.anoms.tmp[y]<- mean(ip.med.sst[ptr])  }
+
+clim.mn<- mean(Med.SST.anoms.tmp[1:145])
+Med.SST.anoms<- Med.SST.anoms.tmp-clim.mn
+
+Med.SST.anoms.filt<- pass.filt(Med.SST.anoms, filt.period, type="low", method="Butterworth", n=usr.filt.n)
+
+
+
+
+###################################################################################################################################################################################################
+
+#####  Make plots 
+
+
+
+fn<- paste0(opdir.plots, "Figure3.png")
+png(file = fn, width = 2500., height = 2500., res=300, pointsize=10, type = 'cairo')
+op <- par( mai = c(0.4, 0.7, 0.2, 0.2), cex=1.0, mfrow=c(2,1)); yrs.plt<- 1850:2014; yrs.plt.obs<- 1940:2022
+
+  yy.max<- 2.0; yy.min<- -2.0;  del.yy<- 0.5
+  yrange=c(yy.min, yy.max); xrange=c(1851,2022)
+  plot(yr.arr.obs, Med.SST.anoms.filt, type="l", lty = 1, cex=2.5, axes = FALSE, xlab = '', ylab = '', xlim=xrange,
+       ylim=yrange, cex.main=1.65, cex.axis=1.35, cex.lab=1.46, main="", lwd=5.5, col='black')
+
+  lines(sim.yrs, ghg.med.ann.ensmn, type="l", lty = 2, cex=1.5, lwd=3.85, col='gold3')
+  lines(sim.yrs, nat.med.ann.ensmn, type="l", lty = 3, cex=1.5, lwd=4.5, col='green3')
+  lines(sim.yrs, aero.med.ann.ensmn, type="l", lty = 4, cex=1.5, lwd=3.85, col='blue3')
+  lines(sim.yrs, hist.med.ann.ensmn, type="l", lty = 1, cex=1.5, lwd=3.85, col='red3')
+  
+  xarr<- (0:9)*20+1860; numx<- length(xarr); yy1<- c(-200,200)
+  for (x in 1:numx) { xx1<- c(xarr[x],xarr[x]); lines(xx1,yy1, type="l",lty = 2,lwd=1.1,col='grey') }
+  yarr<- (-8:8)*2*del.yy; numy<- length(yarr); xx1<- c(1800,2100)
+  for (y in 1:numy) { yy1<- c(yarr[y],yarr[y]); lines(xx1,yy1, type="l",lty = 2,lwd=1.1,col='grey') }
+  lines( c(1800,2100), c(0,0), type="l", lty = 1, lwd=1.5, col='black')
+  legend(1860, yy.max*1.03, c("Observed", "Hist", "GHG", "Nat", "Aero"), lty=c(1, 1, 2, 3, 4), lwd=c(3,3,3,3,3), col=c('black', 'red3', 'gold3', 'green3', 'blue3'), cex=1.38)
+  text(1852, 1.75, '(a)', cex=1.95, col='black', font=2)
+  ax.size = 1.65
+  ## X Axis
+  xticks <- c(1883, 1902, 1912, 1963, 1982, 1991);  axis(side=1, at = xticks, labels = NA, las = 1, tck = 0.1, cex.axis = ax.size, padj=-0.4, col='brown4', lwd=1.5)
+  xticks <- seq(1860, 2020, by=20);  axis(side=1, at = xticks, labels = xticks, las = 1, tck = 0.015, cex.axis = ax.size, padj=-0.4)
+  xticks <- seq(1850, 2020, by=10);  axis(side=1, at = xticks, labels = NA, las = 1, tck = 0.015, cex.axis = ax.size, padj=-0.4)
+  ## Y Axis
+  yticks <- (-8:8)*del.yy;  axis(side=2, at = yticks, labels = NA, las = 1, tck = -0.012, cex.axis = ax.size, hadj=0.85)
+  yticks <- (-8:8);  axis(side=2, at = yticks, labels = yticks, las = 1, tck = -0.012, cex.axis = ax.size, hadj=0.5)
+  yticks <- (-8:8)*del.yy;  axis(side=4, at = yticks, labels = NA, las = 1, tck = 0.012, cex.axis = ax.size, hadj=0.85)
+  mtext(side = 2, 'Mediterranean anomaly (K)', cex = 1.7, padj = -2.4)
+box()
+
+
+yrs.plt<- 1850:2014; yrs.plt.obs<- 1940:2022
+  rgb.palette2 <- colorRampPalette(c( "yellow3","gold3","orange3"), space ="rgb")
+  plotclr <- rgb.palette2(6)
+  rgb.palette3 <- colorRampPalette(c( "blue4","blue1","lightblue4"), space ="rgb")
+  plotclr3 <- rgb.palette3(6)
+
+  yy.max<- 2.5; yy.min<- -2.5;  del.yy<- 0.5
+  yrange=c(yy.min, yy.max); xrange=c(1850,2022)
+  plot(sim.yrs, ghg.med.ann.ensmn, type="l", lty = 1, cex=2.5, axes = FALSE, xlab = '', ylab = '', xlim=xrange,
+       ylim=yrange, cex.main=1.65, cex.axis=1.35, cex.lab=1.46, main="", lwd=5.5, col='gold3')
+
+  for (mm in 1:num.uniq.models) {  temparr<- ghg.med.ann.anom.filt.model[mm, ]; indx<- (1:82)*2; temparr[indx]<- NA ;  lines(yrs.plt, temparr, type="p", pch = mm, cex=0.9, lwd=0.9, col=plotclr[mm])  }
+
+  lines(sim.yrs, aero.med.ann.ensmn, type="l", lty = 1, lwd=5.5, col='blue3')
+  for (mm in 1:num.uniq.models) {  temparr<- aero.med.ann.anom.filt.model[mm, ]; indx<- (1:82)*2; temparr[indx]<- NA ;  lines(yrs.plt, temparr, type="p", pch = mm, cex=0.9, lwd=0.9, col=plotclr3[mm])  }
+
+  xarr<- (0:9)*20+1860; numx<- length(xarr); yy1<- c(-200,200)
+  for (x in 1:numx) { xx1<- c(xarr[x],xarr[x]); lines(xx1,yy1, type="l",lty = 2,lwd=1.1,col='grey') }
+  yarr<- (-8:8)*2*del.yy; numy<- length(yarr); xx1<- c(1800,2100)
+  for (y in 1:numy) { yy1<- c(yarr[y],yarr[y]); lines(xx1,yy1, type="l",lty = 2,lwd=1.1,col='grey') }
+  lines( c(1800,2100), c(0,0), type="l", lty = 1, lwd=1.5, col='black')
+  legend(1869, yy.max*1.025, c("GHG multi-model mean", "GHG model 1", "GHG model 2", "GHG model 3"), lty=c(1, NA, NA, NA), lwd=c(4, 2,2,2), pch=c(NA, 1:3), col=c('gold3', plotclr[1:3]), cex=1.2)
+  legend(1930, yy.max*1.025, c("GHG model 4", "GHG model 5", "GHG model 6"), lty=c(NA, NA, NA), lwd=c(2,2,2), pch=c(4:6), col=c(plotclr[4:6]), cex=1.2)
+  legend(1847, -0.97, c("Aero multi-model mean", "Aero model 1", "Aero model 2", "Aero model 3"), lty=c(1, NA, NA, NA), lwd=c(4, 2,2,2), pch=c(NA, 1:3), col=c('blue3', plotclr3[1:3]), cex=1.2)
+  legend(1907, -1.27, c("Aero model 4", "Aero model 5", "Aero model 6"),lty=c(NA, NA, NA), lwd=c(2,2,2), pch=c(4:6), col=c(plotclr3[4:6]), cex=1.2)
+  text(1852, 2.26, '(b)', cex=1.95, col='black', font=2)
+  ax.size = 1.65
+  ## X Axis
+  xticks <- seq(1860, 2020, by=20);  axis(side=1, at = xticks, labels = xticks, las = 1, tck = 0.015, cex.axis = ax.size, padj=-0.4)
+  xticks <- seq(1850, 2020, by=10);  axis(side=1, at = xticks, labels = NA, las = 1, tck = 0.015, cex.axis = ax.size, padj=-0.4)
+  ## Y Axis
+  yticks <- (-8:8)*del.yy;  axis(side=2, at = yticks, labels = NA, las = 1, tck = -0.012, cex.axis = ax.size, hadj=0.85)
+  yticks <- (-8:8);  axis(side=2, at = yticks, labels = yticks, las = 1, tck = -0.012, cex.axis = ax.size, hadj=0.5)
+  yticks <- (-8:8)*del.yy;  axis(side=4, at = yticks, labels = NA, las = 1, tck = 0.012, cex.axis = ax.size, hadj=0.85)
+  mtext(side = 2, 'Mediterranean anomaly (K)', cex = 1.7, padj = -2.4)
+box(); par(op); dev.off()
+
+
+
+###########################################
+
+
+###  end of program
